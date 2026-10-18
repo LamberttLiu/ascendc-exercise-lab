@@ -1,0 +1,73 @@
+diff --git a/Samples/0_Introduction/vector_add/main.asc b/Samples/0_Introduction/vector_add/main.asc
+index bf39090..95a685b 100644
+--- a/Samples/0_Introduction/vector_add/main.asc
++++ b/Samples/0_Introduction/vector_add/main.asc
+@@ -22,9 +22,15 @@
+ #include <memory>
+ #include <vector>
+ #include "acl/acl.h"
++#ifndef ASCENDC_CPU_DEBUG
+ #include "acl/acl_prof.h"
++#else
++#include "cpu_debug_launch.h"
++#endif
+ #include "kernel_operator.h"
++#ifndef ASCENDC_CPU_DEBUG
+ #include "platform/platform_ascendc.h"
++#endif
+ 
+ // ACL 错误检查宏
+ #define CHECK_ACL(call)                                              \
+@@ -46,6 +52,7 @@ struct AclrtFreeDeleter {
+     }
+ };
+ 
++#ifndef ASCENDC_CPU_DEBUG
+ constexpr const char* PROF_OP_NAME = "vector_add";
+ constexpr const char* PROF_OP_TYPE = "VectorAdd";
+ constexpr uint32_t PROF_INPUT_TENSOR = 0;
+@@ -64,15 +71,24 @@ aclprofTensor MakeVectorTensor(uint32_t type, int64_t numElements)
+     return tensor;
+ }
+ 
++#endif
++
+ std::tuple<int64_t, int64_t, int64_t> calc_tiling_params(int64_t totalLength)
+ {
+     constexpr static int64_t MIN_ELEMS_PER_CORE = 1024;
+     constexpr static int64_t BUFFER_NUM = 2;
+     constexpr static int64_t QUEUE_NUM = 3;
++#ifdef ASCENDC_CPU_DEBUG
++    // CPU test inputs: 8 vector cores and a 192 KiB UB budget (not hardware specs).
++    // These values drive the same tiling formula without loading device libraries.
++    uint64_t ubSize = 192 * 1024;
++    int64_t coreNum = 8;
++#else
+     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
+     uint64_t ubSize;
+     ascendcPlatform->GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
+     int64_t coreNum = ascendcPlatform->GetCoreNumAiv();
++#endif
+     int64_t numBlocks = std::min(coreNum, (totalLength + MIN_ELEMS_PER_CORE - 1) / MIN_ELEMS_PER_CORE);
+     numBlocks = std::max(numBlocks, static_cast<int64_t>(1));
+     int64_t blockLength = (totalLength + numBlocks - 1) / numBlocks;
+@@ -173,6 +189,7 @@ int run_vector_add(aclrtStream stream, int64_t numElements)
+     int64_t numBlocks, blockLength, tileSize;
+     std::tie(numBlocks, blockLength, tileSize) = calc_tiling_params(numElements);
+     CHECK_ACL(aclrtSynchronizeStream(stream));
++#ifndef ASCENDC_CPU_DEBUG
+     aclprofTensor tensors[] = {
+         MakeVectorTensor(PROF_INPUT_TENSOR, numElements),
+         MakeVectorTensor(PROF_INPUT_TENSOR, numElements),
+@@ -195,8 +212,11 @@ int run_vector_add(aclrtStream stream, int64_t numElements)
+         &tensorInfo
+     };
+     aclprofRangePushEx(&attrs);
++#endif
+     add_kernel<float><<<numBlocks, nullptr, stream>>>(d_A, d_B, d_C, numElements, blockLength, tileSize);
++#ifndef ASCENDC_CPU_DEBUG
+     aclprofRangePop();
++#endif
+     CHECK_ACL(aclrtSynchronizeStream(stream));
+ 
+     CHECK_ACL(aclrtMemcpy(h_C.data(), size, d_C, size, ACL_MEMCPY_DEVICE_TO_HOST));
